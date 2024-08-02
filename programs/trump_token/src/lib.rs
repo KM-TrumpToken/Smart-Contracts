@@ -101,10 +101,135 @@ pub mod ico {
     ===========================================================
         buy_with_sol function use BuyWithSol struct
     ===========================================================
-    */
-  
+*/
+    pub fn buy_with_sol(
+        ctx: Context<BuyWithSol>,
+        _ico_ata_for_ico_program_bump: u8,
+        sol_amount: u64,
+    ) -> ProgramResult {
+        // transfer sol from user to admin
+        const STALENESS_THRESHOLD : u64 = 600000000; // staleness threshold in seconds
+        let price_account_info = &ctx.accounts.price_feed;
+        let data = &mut ctx.accounts.data;
+        let price_feed: PriceFeed = load_price_feed_from_account_info( &price_account_info ).unwrap();
+        let current_timestamp = 1716487110;
+        // let current_timestamp1 = Clock::get()?.unix_timestamp;
+        if data.end_time < Clock::get()?.unix_timestamp {
+            return Err(ProgramError::IncorrectProgramId);
+        }
+        if data.admin != ctx.accounts.admin.key() {
+            return Err(ProgramError::IncorrectProgramId);
+        }
+       
+        let current_price = price_feed.get_price_no_older_than(current_timestamp, STALENESS_THRESHOLD);
+        match current_price {
+            Some(price) => {
+              let display_price = u64::try_from(price.price).unwrap() / 10u64.pow(u32::try_from(-price.expo).unwrap());
+              msg!("Price using match: {:?}", display_price);
+              let amount_in_usdt = display_price * SCALE;
+            //   let sol_amountWithScale = sol_amount / 1000;
+              let sol_in_usdt = amount_in_usdt * sol_amount;
+              let ico_amount;
+                ico_amount = sol_in_usdt / data.usdt;
+            if ico_amount > (data.total_amount - data.amount_sold) {
+                return Err(ProgramError::InsufficientFunds);
+            }
+             
+            let ix = anchor_lang::solana_program::system_instruction::transfer(
+            &ctx.accounts.user.key(),
+            &ctx.accounts.admin.key(),
+            sol_amount,
+             );
+            anchor_lang::solana_program::program::invoke(
+            &ix,
+            &[
+                ctx.accounts.user.to_account_info(),
+                ctx.accounts.admin.to_account_info(),
+            ],
+           )?;
+           msg!("transfer {} sol to admin.", sol_amount);
+
+           // transfer ICO from program to user ATA
+           // let ico_amount = sol_amount * ctx.accounts.data.sol;
+           let ico_mint_address = ctx.accounts.ico_mint.key();
+           let seeds = &[ico_mint_address.as_ref(), &[_ico_ata_for_ico_program_bump]];
+           let signer = [&seeds[..]];
+           let cpi_ctx = CpiContext::new_with_signer(
+           ctx.accounts.token_program.to_account_info(),
+            token::Transfer {
+                from: ctx.accounts.ico_ata_for_ico_program.to_account_info(),
+                to: ctx.accounts.ico_ata_for_user.to_account_info(),
+                authority: ctx.accounts.ico_ata_for_ico_program.to_account_info(),
+            },
+            &signer,
+            );
+            token::transfer(cpi_ctx, ico_amount)?;
+            data.amount_sold = data.amount_sold + ico_amount;
+            msg!("transfer {} ico to buyer/user.", ico_amount);
+        },
+        None => msg!("No price found"),
+        }
+        Ok(())
+    }
+
+   
 
 
+
+ /* 
+    ===========================================================
+        Function to Withdraw Remaining token after ICO
+    ===========================================================
+*/
+
+     pub fn withdraw(
+        ctx: Context<WithDraw>,
+        _ico_ata_for_ico_program_bump: u8,
+        token_amount: u64,
+    ) -> ProgramResult {
+        if ctx.accounts.data.admin != ctx.accounts.admin.key() {
+            return Err(ProgramError::IllegalOwner);
+        }
+        if ctx.accounts.data.manager != ctx.accounts.manager.key() {
+            return Err(ProgramError::IllegalOwner);
+        }
+        
+        let ico_mint_address = ctx.accounts.ico_mint.key();
+        let seeds = &[ico_mint_address.as_ref(), &[_ico_ata_for_ico_program_bump]];
+        let signer = [&seeds[..]];
+        let cpi_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            token::Transfer {
+                from: ctx.accounts.ico_ata_for_ico_program.to_account_info(),
+                to: ctx.accounts.ico_ata_for_user.to_account_info(),
+                authority: ctx.accounts.ico_ata_for_ico_program.to_account_info(),
+            },
+            &signer,
+        );
+        token::transfer(cpi_ctx, token_amount)?;
+        Ok(())
+    }
+
+    /* 
+    ===========================================================
+        update_data function use UpdateData struct
+    ===========================================================
+*/
+    pub fn update_data(ctx: Context<UpdateData>, total_amount: u64,end_time: i64, usdt_price: u64,usdt_ata_for_admin:Pubkey,phase: u64) -> ProgramResult {
+        if ctx.accounts.data.manager != *ctx.accounts.manager.key {
+            return Err(ProgramError::IncorrectProgramId);
+        }
+        let data = &mut ctx.accounts.data;
+       
+        data.end_time = end_time;
+        data.usdt = usdt_price;
+        data.total_amount = total_amount;
+        data.amount_sold = 0;
+        data.usdt_ata_for_admin = usdt_ata_for_admin;
+        data.phase_id = phase;
+        msg!("update ico time {}, {} and USDT/ICO {}", total_amount,end_time, usdt_price);
+        Ok(())
+    }
 
 
     pub fn update_admin(ctx: Context<UpdateAdmin>, usdt_ata_for_admin:Pubkey,new_admin: Pubkey, new_manager:Pubkey) -> ProgramResult {
@@ -224,7 +349,6 @@ pub mod ico {
 
         #[account(mut)]
         pub user: Signer<'info>,
-        pub manager:Signer<'info>,
 
         /// CHECK:
         #[account(mut)]
@@ -234,8 +358,127 @@ pub mod ico {
         pub system_program: Program<'info, System>,
     }
 
+    /* 
+    -----------------------------------------------------------
+        BuyWithUsdt struct for buy_with_usdt function
+    -----------------------------------------------------------
+*/
+    #[derive(Accounts)]
+    #[instruction(_ico_ata_for_ico_program_bump: u8)]
+    pub struct BuyWithUsdt<'info> {
+        #[account(
+        mut,
+        seeds = [ ico_mint.key().as_ref() ],
+        bump = _ico_ata_for_ico_program_bump,
+    )]
+        pub ico_ata_for_ico_program: Account<'info, TokenAccount>,
 
-   
+        #[account(mut)]
+        pub data: Account<'info, Data>,
+
+        #[account(
+        address = ICO_MINT_ADDRESS.parse::<Pubkey>().unwrap(),
+    )]
+        pub ico_mint: Account<'info, Mint>,
+
+        #[account(mut)]
+        pub ico_ata_for_user: Account<'info, TokenAccount>,
+
+        #[account(mut)]
+        pub usdt_ata_for_user: Account<'info, TokenAccount>,
+
+        #[account(mut)]
+        pub usdt_ata_for_admin: Account<'info, TokenAccount>,
+
+        #[account(mut)]
+        pub user: Signer<'info>,
+
+        pub token_program: Program<'info, Token>,
+    }
+
+     /* 
+    -----------------------------------------------------------
+        BuyWithUsdt struct for buy_with_usdt function
+    -----------------------------------------------------------
+*/
+#[derive(Accounts)]
+#[instruction(_ico_ata_for_ico_program_bump: u8)]
+pub struct BuyWithUsdc<'info> {
+    #[account(
+    mut,
+    seeds = [ ico_mint.key().as_ref() ],
+    bump = _ico_ata_for_ico_program_bump,
+)]
+    pub ico_ata_for_ico_program: Account<'info, TokenAccount>,
+
+    #[account(mut)]
+    pub data: Account<'info, Data>,
+
+    #[account(
+    address = ICO_MINT_ADDRESS.parse::<Pubkey>().unwrap(),
+)]
+    pub ico_mint: Account<'info, Mint>,
+
+    #[account(mut)]
+    pub ico_ata_for_user: Account<'info, TokenAccount>,
+
+    #[account(mut)]
+    pub usdc_ata_for_user: Account<'info, TokenAccount>,
+
+    #[account(mut)]
+    pub usdc_ata_for_admin: Account<'info, TokenAccount>,
+
+    #[account(mut)]
+    pub user: Signer<'info>,
+
+    pub token_program: Program<'info, Token>,
+}
+
+
+
+     #[derive(Accounts)]
+    #[instruction(_ico_ata_for_ico_program_bump: u8)]
+    pub struct WithDraw<'info> {
+        #[account(
+        mut,
+        seeds = [ ico_mint.key().as_ref() ],
+        bump = _ico_ata_for_ico_program_bump,
+    )]
+        pub ico_ata_for_ico_program: Account<'info, TokenAccount>,
+
+        #[account(mut)]
+        pub data: Account<'info, Data>,
+
+        #[account(
+        address = ICO_MINT_ADDRESS.parse::<Pubkey>().unwrap(),
+    )]
+        pub ico_mint: Account<'info, Mint>,
+
+        #[account(mut)]
+        pub ico_ata_for_user: Account<'info, TokenAccount>,
+
+        #[account(mut)]
+        pub admin: Signer<'info>,
+        pub manager:Signer<'info>,
+
+        
+
+        pub token_program: Program<'info, Token>,
+    }
+
+    /* 
+    -----------------------------------------------------------
+        UpdateData struct for update_data function
+    -----------------------------------------------------------
+*/
+    #[derive(Accounts)]
+    pub struct UpdateData<'info> {
+        #[account(mut)]
+        pub data: Account<'info, Data>,
+        #[account(mut)]
+        pub manager: Signer<'info>,
+        pub system_program: Program<'info, System>,
+    }
      
      #[derive(Accounts)]
     pub struct UpdateAdmin<'info> {
