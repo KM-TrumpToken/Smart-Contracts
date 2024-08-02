@@ -4,7 +4,7 @@ use anchor_spl::token::{self, Mint, Token, TokenAccount};
 use pyth_sdk_solana::{load_price_feed_from_account_info, PriceFeed};
 use std::str::FromStr;
 
-declare_id!("BJGmSiManG1xTYByov97DAsiB5yNF59gdqSHzo8URq9E");
+declare_id!("");
 
 const BTC_USDC_FEED: &str = "J83w4HKfqxwcq3BEMMkPFSppX3gqekLyLJBexebFVkix";
 
@@ -172,10 +172,7 @@ pub mod ico {
         Ok(())
     }
 
-   
-
-
-
+  
  /* 
     ===========================================================
         Function to Withdraw Remaining token after ICO
