@@ -6,7 +6,7 @@ use std::str::FromStr;
 
 declare_id!("BJGmSiManG1xTYByov97DAsiB5yNF59gdqSHzo8URq9E");
 
-const SOL_USDC_FEED: &str = "J83w4HKfqxwcq3BEMMkPFSppX3gqekLyLJBexebFVkix";
+const SOL_USDC_FEED: &str = "";
 
 
 #[derive(Accounts)]
