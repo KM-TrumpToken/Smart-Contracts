@@ -27,7 +27,7 @@ pub enum FeedError {
 #[program]
 pub mod ico {
     // pub const USDT_MINT_ADDRESS: &str = "2cCcopLR3UAk4WEgLXFteaVvJurctuc25Mx8JEQCQoY7";
-    pub const ICO_MINT_ADDRESS: &str = "8jf4rgEzz5Lr2B3XfWnj6cE9bbSzxRg9RuZh21yQE6TL";
+    pub const ICO_MINT_ADDRESS: &str = "";
     pub const SCALE: u64 = 1_000_000;
     use super::*;
 
