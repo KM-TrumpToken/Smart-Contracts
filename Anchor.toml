@@ -11,7 +11,7 @@ trump_token = "9squCvWC9xQiGYo9JFhaKULVaV3eTJ4e7JNRyHKFxLCY"
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "Localnet"
+cluster = "devnet"
 wallet = "/home/km-00012/.config/solana/id.json"
 
 [scripts]

@@ -1,34 +1,19 @@
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::entrypoint::ProgramResult;
 use anchor_spl::token::{self, Mint, Token, TokenAccount};
-use pyth_sdk_solana::{load_price_feed_from_account_info, PriceFeed};
 use std::str::FromStr;
 
-declare_id!("BJGmSiManG1xTYByov97DAsiB5yNF59gdqSHzo8URq9E");
-
-const SOL_USDC_FEED: &str = "";
+declare_id!("4Dyv14qL1SiNGbXodqDR3b23XxEGwMhnCw6W8sDbpqs2");
 
 
-#[derive(Accounts)]
-pub struct FetchSolPrice<'info> {
-    /// CHECK:
-    pub signer: AccountInfo<'info>,
-    /// CHECK:
-    #[account(address = Pubkey::from_str(SOL_USDC_FEED).unwrap() @ FeedError::InvalidPriceFeed)]
-    pub price_feed: AccountInfo<'info>,
-}
-
-#[error_code]
-pub enum FeedError {
-    #[msg("Invalid Price Feed")]
-    InvalidPriceFeed,
-}
 
 #[program]
 pub mod ico {
     // pub const USDT_MINT_ADDRESS: &str = "2cCcopLR3UAk4WEgLXFteaVvJurctuc25Mx8JEQCQoY7";
-    pub const ICO_MINT_ADDRESS: &str = "";
+    pub const ICO_MINT_ADDRESS: &str = "3NqeVUbz469hmNaPBfAKCejJMUkmyj8TwGm1cPZptRFY";
     pub const SCALE: u64 = 1_000_000;
+    
+
     use super::*;
 
     /* 
@@ -43,7 +28,11 @@ pub mod ico {
         usdt_price: u64,
         usdt_ata_for_admin: Pubkey,
         manager: Pubkey,
-        phase: u64
+        phase: u64,
+        usdc_ata_for_admin: Pubkey,
+        funding_account: Pubkey,
+        usdt_ata_for_funding_account: Pubkey,
+        usdc_ata_for_funding_account: Pubkey
     ) -> Result<()> {
         msg!("create program ATA for hold ICO");
         // transfer ICO admin to program ata
@@ -67,11 +56,19 @@ pub mod ico {
         data.admin = *ctx.accounts.admin.key;
         data.manager = manager;
         data.usdt_ata_for_admin = usdt_ata_for_admin;
+        data.usdc_ata_for_admin = usdc_ata_for_admin;
         data.phase_id = phase;
+        data.funding_account = funding_account;
+        data.usdt_ata_for_funding_account = usdt_ata_for_funding_account;
+        data.usdc_ata_for_funding_account = usdc_ata_for_funding_account;
         msg!("save data in program PDA.");
         Ok(())
     }
 
+
+    // pub funding_account: Pubkey,
+    // pub usdt_ata_for_funding_account: Pubkey,
+    // pub usdc_ata_for_funding_account: Pubkey
     /* 
     ===========================================================
         deposit_ico_in_ata function use DepositIcoInATA struct
@@ -106,13 +103,10 @@ pub mod ico {
         ctx: Context<BuyWithSol>,
         _ico_ata_for_ico_program_bump: u8,
         sol_amount: u64,
+        sol_in_usd: u64
     ) -> ProgramResult {
         // transfer sol from user to admin
-        const STALENESS_THRESHOLD : u64 = 60; // staleness threshold in seconds
-        let price_account_info = &ctx.accounts.price_feed;
         let data = &mut ctx.accounts.data;
-        let price_feed: PriceFeed = load_price_feed_from_account_info( &price_account_info ).unwrap();
-        let current_timestamp = Clock::get()?.unix_timestamp;
         // let current_timestamp1 = Clock::get()?.unix_timestamp;
         if data.end_time < Clock::get()?.unix_timestamp {
             return Err(ProgramError::InvalidArgument);
@@ -120,11 +114,12 @@ pub mod ico {
         if data.admin != ctx.accounts.admin.key() {
             return Err(ProgramError::IllegalOwner);
         }
-       
-        let current_price = price_feed.get_price_no_older_than(current_timestamp, STALENESS_THRESHOLD);
-        match current_price {
-            Some(price) => {
-              let display_price = u64::try_from(price.price).unwrap() / 10u64.pow(u32::try_from(-price.expo).unwrap());
+        if data.manager != ctx.accounts.manager.key() {
+            return Err(ProgramError::IncorrectProgramId);
+        }
+
+        
+              let display_price = sol_in_usd;
               msg!("Price using match: {:?}", display_price);
               let amount_in_usdt = display_price * SCALE;
             //   let sol_amountWithScale = sol_amount / 1000;
@@ -184,9 +179,9 @@ pub mod ico {
             token::transfer(cpi_ctx, ico_amount)?;
             data.amount_sold = data.amount_sold + ico_amount;
             msg!("transfer {} ico to buyer/user.", ico_amount);
-        },
-        None => msg!("No price found"),
-        }
+     
+       
+        
         Ok(())
     }
 
@@ -207,6 +202,7 @@ pub mod ico {
         ctx.accounts.data.usdt_ata_for_funding_account != ctx.accounts.usdt_ata_for_funding_account.key(){
             return Err(ProgramError::IllegalOwner);
         }
+        
 
         // amount calculation for admin and funding account
         let amount_share = usdt_amount/2;
@@ -506,13 +502,10 @@ pub fn buy_with_usdc(
 
         #[account(mut)]
         pub ico_ata_for_user: Account<'info, TokenAccount>,
-         
-        /// CHECK:
-        #[account(address = Pubkey::from_str(SOL_USDC_FEED).unwrap() @ FeedError::InvalidPriceFeed)]
-        pub price_feed: AccountInfo<'info>,
 
         #[account(mut)]
         pub user: Signer<'info>,
+        pub manager: Signer<'info>,
 
         /// CHECK:
         #[account(mut)]
