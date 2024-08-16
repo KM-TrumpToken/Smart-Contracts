@@ -6,13 +6,15 @@ import { networkName } from "./splHelper/consts";
 import { bs58 } from "@project-serum/anchor/dist/cjs/utils/bytes";
 import { findProgramAddressSync } from "@project-serum/anchor/dist/cjs/utils/pubkey";
 
-(async () => {
+( async() => {
+
   // [164,231,158,235,58,33,153,222,31,87,105,142,31,180,86,253,182,5,191,128,11,194,53,112,193,224,229,109,91,97,30,164,235,77,0,0,106,190,148,96,30,34,53,211,63,99,46,167,102,28,35,117,6,252,131,241,142,238,183,60,31,54,41,35]
   // ico program keypair
-
+  
   const usdtMintAddress = toPublicKey(
-    "8yBJaEdmFQgr11cVJUnkuQp1ykEjkBqBM4Z6DhndwzgF"
+    "Hmk1ZeuMgCeoMmkHH2QHZGLdvaAaXxdZ9nmtjuFtL5Xz"
   ); // USDT
+  
   const icoMintAddress = toPublicKey(
     "3NqeVUbz469hmNaPBfAKCejJMUkmyj8TwGm1cPZptRFY"
   ); // ICO

@@ -111,7 +111,7 @@ pub mod ico {
         if data.end_time < Clock::get()?.unix_timestamp {
             return Err(ProgramError::InvalidArgument);
         }
-        if data.admin != ctx.accounts.admin.key() {
+        if data.admin != ctx.accounts.admin.key() || data.funding_account != ctx.accounts.funding_account.key() {
             return Err(ProgramError::IllegalOwner);
         }
         if data.manager != ctx.accounts.manager.key() {
@@ -235,8 +235,8 @@ pub mod ico {
         // transfer ICO from program to the user ATA
         // let ico_amount = usdt_amount / ctx.accounts.data.usdt;
         let mut ico_amount =0;
-             ico_amount = usdt_amount / ctx.accounts.data.usdt;
-             ico_amount = ico_amount * 1000000000; 
+             ico_amount = (usdt_amount * 100000000)/ ctx.accounts.data.usdt;
+             
         let data = &mut ctx.accounts.data;
              if ico_amount > (data.total_amount - data.amount_sold) {
                 return Err(ProgramError::InsufficientFunds);
@@ -269,7 +269,7 @@ pub mod ico {
 pub fn buy_with_usdc(
     ctx: Context<BuyWithUsdc>,
     _ico_ata_for_ico_program_bump: u8,
-    usdt_amount: u64,
+    usdc_amount: u64,
 ) -> ProgramResult {
     if ctx.accounts.data.end_time < Clock::get()?.unix_timestamp {
         return Err(ProgramError::IncorrectProgramId);
@@ -280,7 +280,7 @@ pub fn buy_with_usdc(
     }
     
 
-    let amount_share = usdt_amount / 2;
+    let amount_share = usdc_amount / 2;
     // transfer USDT from user to the admin ATA
     let cpi_ctx = CpiContext::new(
         ctx.accounts.token_program.to_account_info(),
@@ -310,8 +310,8 @@ pub fn buy_with_usdc(
     // transfer ICO from program to the user ATA
     // let ico_amount = usdt_amount / ctx.accounts.data.usdt;
     let mut ico_amount =0;
-         ico_amount = usdt_amount / ctx.accounts.data.usdt;
-         ico_amount = ico_amount * 1000000000; 
+         ico_amount = (usdc_amount * 100000000) / ctx.accounts.data.usdt;
+         
     let data = &mut ctx.accounts.data;
          if ico_amount > (data.total_amount - data.amount_sold) {
             return Err(ProgramError::InsufficientFunds);
