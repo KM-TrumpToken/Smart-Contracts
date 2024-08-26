@@ -5,13 +5,13 @@ seeds = false
 skip-lint = false
 
 [programs.localnet]
-trump_token = "9squCvWC9xQiGYo9JFhaKULVaV3eTJ4e7JNRyHKFxLCY"
+trump_token = "BaGYHRyRmamP9FkKNw7rnC79BwFnTtRYRLsHc8a5iSvr"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "devnet"
+cluster = "Devnet"
 wallet = "/home/km-00012/.config/solana/id.json"
 
 [scripts]

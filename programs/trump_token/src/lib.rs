@@ -1,9 +1,29 @@
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::entrypoint::ProgramResult;
 use anchor_spl::token::{self, Mint, Token, TokenAccount};
+use pyth_solana_receiver_sdk::price_update::{get_feed_id_from_hex, PriceUpdateV2};
 use std::str::FromStr;
 
-declare_id!("4Dyv14qL1SiNGbXodqDR3b23XxEGwMhnCw6W8sDbpqs2");
+declare_id!("BaGYHRyRmamP9FkKNw7rnC79BwFnTtRYRLsHc8a5iSvr");
+
+const SOL_USDT_FEED: &str = "7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE";
+pub const MAXIMUM_AGE: u64 = 60000; // One minute
+pub const FEED_ID: &str = "0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"; // SOL/USD price feed id from https://pyth.network/developers/price-feed-ids
+
+#[derive(Accounts)]
+pub struct FetchSolPrice<'info> {
+    /// CHECK:
+    pub signer: AccountInfo<'info>,
+    /// CHECK:
+    #[account(address = Pubkey::from_str(SOL_USDT_FEED).unwrap() @ FeedError::InvalidPriceFeed)]
+    pub price_feed: AccountInfo<'info>,
+}
+
+#[error_code]
+pub enum FeedError {
+    #[msg("Invalid Price Feed")]
+    InvalidPriceFeed,
+}
 
 
 
@@ -11,7 +31,7 @@ declare_id!("4Dyv14qL1SiNGbXodqDR3b23XxEGwMhnCw6W8sDbpqs2");
 pub mod ico {
     // pub const USDT_MINT_ADDRESS: &str = "2cCcopLR3UAk4WEgLXFteaVvJurctuc25Mx8JEQCQoY7";
     pub const ICO_MINT_ADDRESS: &str = "3NqeVUbz469hmNaPBfAKCejJMUkmyj8TwGm1cPZptRFY";
-    pub const SCALE: u64 = 1_000_000;
+    pub const SCALE: u64 = 1_000_00;
     
 
     use super::*;
@@ -102,11 +122,18 @@ pub mod ico {
     pub fn buy_with_sol(
         ctx: Context<BuyWithSol>,
         _ico_ata_for_ico_program_bump: u8,
-        sol_amount: u64,
-        sol_in_usd: u64
+        sol_amount: u64
     ) -> ProgramResult {
+
         // transfer sol from user to admin
         let data = &mut ctx.accounts.data;
+        
+        let price_update = &mut ctx.accounts.price_feed;
+        let price = price_update.get_price_no_older_than(
+            &Clock::get()?,
+            MAXIMUM_AGE,
+            &get_feed_id_from_hex(FEED_ID).map_err(|_err| ProgramError::Custom(1))?,
+        ).map_err(|_err| ProgramError::Custom(1))?;
         // let current_timestamp1 = Clock::get()?.unix_timestamp;
         if data.end_time < Clock::get()?.unix_timestamp {
             return Err(ProgramError::InvalidArgument);
@@ -114,12 +141,8 @@ pub mod ico {
         if data.admin != ctx.accounts.admin.key() || data.funding_account != ctx.accounts.funding_account.key() {
             return Err(ProgramError::IllegalOwner);
         }
-        if data.manager != ctx.accounts.manager.key() {
-            return Err(ProgramError::IncorrectProgramId);
-        }
+        let display_price = u64::try_from(price.price).unwrap() / 10u64.pow(u32::try_from(-price.exponent).unwrap());
 
-        
-              let display_price = sol_in_usd;
               msg!("Price using match: {:?}", display_price);
               let amount_in_usdt = display_price * SCALE;
             //   let sol_amountWithScale = sol_amount / 1000;
@@ -503,9 +526,12 @@ pub fn buy_with_usdc(
         #[account(mut)]
         pub ico_ata_for_user: Account<'info, TokenAccount>,
 
+        /// CHECK:
+        #[account(address = Pubkey::from_str(SOL_USDT_FEED).unwrap() @ FeedError::InvalidPriceFeed)]
+        pub price_feed: Account<'info, PriceUpdateV2>,
+
         #[account(mut)]
         pub user: Signer<'info>,
-        pub manager: Signer<'info>,
 
         /// CHECK:
         #[account(mut)]
