@@ -7,7 +7,7 @@ use std::str::FromStr;
 declare_id!("BaGYHRyRmamP9FkKNw7rnC79BwFnTtRYRLsHc8a5iSvr");
 
 const SOL_USDT_FEED: &str = "7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE";
-pub const MAXIMUM_AGE: u64 = 60000; // One minute
+pub const MAXIMUM_AGE: u64 = 60; // One minute
 pub const FEED_ID: &str = "0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"; // SOL/USD price feed id from https://pyth.network/developers/price-feed-ids
 
 #[derive(Accounts)]
@@ -109,7 +109,7 @@ pub mod ico {
         );
         token::transfer(cpi_ctx, ico_amount)?;
         let data = &mut ctx.accounts.data;
-        data.total_amount = ico_amount;
+        data.total_amount += ico_amount;
         msg!("deposit {} ICO in program ATA.", ico_amount);
         Ok(())
     }
