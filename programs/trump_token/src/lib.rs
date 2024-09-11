@@ -122,7 +122,8 @@ pub mod ico {
     pub fn buy_with_sol(
         ctx: Context<BuyWithSol>,
         _ico_ata_for_ico_program_bump: u8,
-        sol_amount: u64
+        sol_amount: u64,
+        min_amount_out: u64
     ) -> ProgramResult {
 
         // transfer sol from user to admin
@@ -152,7 +153,10 @@ pub mod ico {
             if ico_amount > (data.total_amount - data.amount_sold) {
                 return Err(ProgramError::InsufficientFunds);
             }
-             
+            // minimum amount out after implementing slippage
+            if ico_amount < min_amount_out {
+                return Err(ProgramError::Custom(1));
+            }
             let funding_amount = sol_amount / 2;
             let ix = anchor_lang::solana_program::system_instruction::transfer(
             &ctx.accounts.user.key(),
@@ -374,6 +378,10 @@ pub fn buy_with_usdc(
         }
         if ctx.accounts.data.manager != ctx.accounts.manager.key() {
             return Err(ProgramError::IllegalOwner);
+        }
+
+        if ctx.accounts.data.end_time > Clock::get()?.unix_timestamp {
+            return Err(ProgramError::Custom(0));
         }
         
         let ico_mint_address = ctx.accounts.ico_mint.key();
