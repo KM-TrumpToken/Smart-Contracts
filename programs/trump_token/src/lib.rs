@@ -4,9 +4,9 @@ use anchor_spl::token::{self, Mint, Token, TokenAccount};
 use pyth_solana_receiver_sdk::price_update::{get_feed_id_from_hex, PriceUpdateV2};
 use std::str::FromStr;
 
-declare_id!("BaGYHRyRmamP9FkKNw7rnC79BwFnTtRYRLsHc8a5iSvr");
+declare_id!("HXCVfLkfbXnZXst6HL5G1pDWPdEtxXhprWyFkJmwSPFS");
 
-const SOL_USDT_FEED: &str = "7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE";
+const SOL_USD_FEED: &str = "7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE";
 pub const MAXIMUM_AGE: u64 = 60; // One minute
 pub const FEED_ID: &str = "0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d"; // SOL/USD price feed id from https://pyth.network/developers/price-feed-ids
 
@@ -15,7 +15,7 @@ pub struct FetchSolPrice<'info> {
     /// CHECK:
     pub signer: AccountInfo<'info>,
     /// CHECK:
-    #[account(address = Pubkey::from_str(SOL_USDT_FEED).unwrap() @ FeedError::InvalidPriceFeed)]
+    #[account(address = Pubkey::from_str(SOL_USD_FEED).unwrap() @ FeedError::InvalidPriceFeed)]
     pub price_feed: AccountInfo<'info>,
 }
 
@@ -25,13 +25,25 @@ pub enum FeedError {
     InvalidPriceFeed,
 }
 
+#[error_code]
+pub enum OwnerError {
+    #[msg("Invalid Owner")]
+    InvalidOwner,
+}
+#[error_code]
+pub enum IcoTimeError {
+    #[msg("The event has not ended yet.")]
+    EventNotEnded,
+}
+
 
 
 #[program]
 pub mod ico {
-    // pub const USDT_MINT_ADDRESS: &str = "2cCcopLR3UAk4WEgLXFteaVvJurctuc25Mx8JEQCQoY7";
+    pub const OWNER_ADDRESS: &str = "EvKCj62U6fsDJyqwcSeanyeK7YUvWeW989vLhksDGa2i";
     pub const ICO_MINT_ADDRESS: &str = "3NqeVUbz469hmNaPBfAKCejJMUkmyj8TwGm1cPZptRFY";
-    pub const SCALE: u64 = 1_000_00;
+    pub const SCALE: u64 = 1_000_000;
+    pub const SCALE_FACTOR_TRUMP_TOKEN: u64 = 100_000_000;
     
 
     use super::*;
@@ -45,15 +57,21 @@ pub mod ico {
         ctx: Context<CreateIcoATA>,
         ico_amount: u64,
         end_time:i64,
-        usdt_price: u64,
+        usd_price: u64,
+        funding_share: u64,
+        admin: Pubkey,
         usdt_ata_for_admin: Pubkey,
-        manager: Pubkey,
-        phase: u64,
         usdc_ata_for_admin: Pubkey,
         funding_account: Pubkey,
         usdt_ata_for_funding_account: Pubkey,
         usdc_ata_for_funding_account: Pubkey
     ) -> Result<()> {
+        let admin_pubkey = Pubkey::from_str(OWNER_ADDRESS).unwrap();
+        // address = Pubkey::from_str(OWNER_ADDRESS).unwrap() @ OwnerError::InvalidOwner
+        require!(
+            ctx.accounts.admin.key() == admin_pubkey,
+            OwnerError::InvalidOwner
+        );
         msg!("create program ATA for hold ICO");
         // transfer ICO admin to program ata
         let cpi_ctx = CpiContext::new(
@@ -70,14 +88,13 @@ pub mod ico {
         
         let data = &mut ctx.accounts.data;
         data.end_time = end_time;
-        data.usdt = usdt_price;
+        data.usd = usd_price;
         data.total_amount = ico_amount;
         data.amount_sold = 0;
-        data.admin = *ctx.accounts.admin.key;
-        data.manager = manager;
+        data.funding_share = funding_share;
+        data.admin = admin;
         data.usdt_ata_for_admin = usdt_ata_for_admin;
         data.usdc_ata_for_admin = usdc_ata_for_admin;
-        data.phase_id = phase;
         data.funding_account = funding_account;
         data.usdt_ata_for_funding_account = usdt_ata_for_funding_account;
         data.usdc_ata_for_funding_account = usdc_ata_for_funding_account;
@@ -86,17 +103,14 @@ pub mod ico {
     }
 
 
-    // pub funding_account: Pubkey,
-    // pub usdt_ata_for_funding_account: Pubkey,
-    // pub usdc_ata_for_funding_account: Pubkey
     /* 
     ===========================================================
         deposit_ico_in_ata function use DepositIcoInATA struct
     ===========================================================
 */
     pub fn deposit_ico_in_ata(ctx: Context<DepositIcoInATA>, ico_amount: u64) -> ProgramResult {
-        if ctx.accounts.data.admin != *ctx.accounts.admin.key {
-            return Err(ProgramError::IncorrectProgramId);
+        if ctx.accounts.data.admin != ctx.accounts.admin.key() {
+            return Err(ProgramError::IllegalOwner);
         }
         // transfer ICO admin to program ata
         let cpi_ctx = CpiContext::new(
@@ -122,8 +136,7 @@ pub mod ico {
     pub fn buy_with_sol(
         ctx: Context<BuyWithSol>,
         _ico_ata_for_ico_program_bump: u8,
-        sol_amount: u64,
-        min_amount_out: u64
+        sol_amount: u64
     ) -> ProgramResult {
 
         // transfer sol from user to admin
@@ -137,27 +150,47 @@ pub mod ico {
         ).map_err(|_err| ProgramError::Custom(1))?;
         // let current_timestamp1 = Clock::get()?.unix_timestamp;
         if data.end_time < Clock::get()?.unix_timestamp {
-            return Err(ProgramError::InvalidArgument);
+            return Err(ProgramError::Custom(data.end_time as u32));
         }
         if data.admin != ctx.accounts.admin.key() || data.funding_account != ctx.accounts.funding_account.key() {
             return Err(ProgramError::IllegalOwner);
         }
-        let display_price = u64::try_from(price.price).unwrap() / 10u64.pow(u32::try_from(-price.exponent).unwrap());
+        
+        let pyth_price = u64::try_from(price.price).unwrap();
+        //u64::try_from(price.price).unwrap() / 10u64.pow(u32::try_from(-price.exponent).unwrap());
 
-              msg!("Price using match: {:?}", display_price);
-              let amount_in_usdt = display_price * SCALE;
+            msg!("Price using match: {:?}", pyth_price);
+            let amount_in_usd = pyth_price * SCALE;
+            msg!("amount_in_usd: {:?}", amount_in_usd);
+            msg!("sol_amount: {:?}", sol_amount);
+
             //   let sol_amountWithScale = sol_amount / 1000;
-              let sol_in_usdt = amount_in_usdt * sol_amount;
-              let ico_amount;
-                ico_amount = sol_in_usdt / data.usdt;
-            if ico_amount > (data.total_amount - data.amount_sold) {
+            // sol_amount will always be in lamports ( * 1e9 ) 
+            // if we will multiply pyth_price with scale then total decimals with pyth_price, scale and 
+            // solana lamport will be (9 + 6 + pyth_exponent = 15 + pyth_exponent) 
+            let sol_in_usd:u128 = amount_in_usd as u128 * sol_amount as u128;
+            msg!("sol_in_usd: {:?}", sol_in_usd);
+            // data.usd amount will be scaled with 6 decimal places to handle floating point
+            // this calculation used to handle Price Calculation Precision Loss
+            // so when we divide sol_in_usd by data.amount then remaining values will be in 9 decimal places and pyth_exponent
+        
+            let ico_amount_without_exponent_scaling = sol_in_usd / data.usd as u128;
+            msg!("ico_amount_without_exponent_scaling: {:?}", ico_amount_without_exponent_scaling);
+            // Now we have to divide the ico_amount_without_exponent_scaling amount by pyth exponent to go to 9 decimals places
+            // still 1 extra decimals point exist with respect to trump tokens decimals.
+            
+            let ico_amount_with_extra_decimals_points = ico_amount_without_exponent_scaling / 10u128.pow(u32::try_from(-price.exponent).unwrap());
+            msg!("ico_amount_with_extra_decimals_points: {:?}", ico_amount_with_extra_decimals_points);
+            // we have to divide the amount by 10
+            // Now amount will be with respect to 8 decimals points of trump tokens
+            let ico_amount = ico_amount_with_extra_decimals_points / 10;
+            msg!("ico_amount: {:?}", ico_amount);
+
+            if ico_amount > (data.total_amount as u128 - data.amount_sold as u128) {
                 return Err(ProgramError::InsufficientFunds);
             }
-            // minimum amount out after implementing slippage
-            if ico_amount < min_amount_out {
-                return Err(ProgramError::Custom(1));
-            }
-            let funding_amount = sol_amount / 2;
+            
+            let funding_amount = (sol_amount* data.funding_share)/ 1000;
             let ix = anchor_lang::solana_program::system_instruction::transfer(
             &ctx.accounts.user.key(),
             &ctx.accounts.admin.key(),
@@ -203,8 +236,8 @@ pub mod ico {
             },
             &signer,
             );
-            token::transfer(cpi_ctx, ico_amount)?;
-            data.amount_sold = data.amount_sold + ico_amount;
+            token::transfer(cpi_ctx, ico_amount as u64)?;
+            data.amount_sold += ico_amount as u64;
             msg!("transfer {} ico to buyer/user.", ico_amount);
      
        
@@ -222,17 +255,19 @@ pub mod ico {
         _ico_ata_for_ico_program_bump: u8,
         usdt_amount: u64,
     ) -> ProgramResult {
-        if ctx.accounts.data.end_time < Clock::get()?.unix_timestamp {
-            return Err(ProgramError::IncorrectProgramId);
+        let data = &mut ctx.accounts.data;
+        if data.end_time < Clock::get()?.unix_timestamp {
+            return Err(ProgramError::Custom(ctx.accounts.data.end_time as u32));
         }
-        if ctx.accounts.data.usdt_ata_for_admin != ctx.accounts.usdt_ata_for_admin.key() || 
-        ctx.accounts.data.usdt_ata_for_funding_account != ctx.accounts.usdt_ata_for_funding_account.key(){
+        
+        if data.usdt_ata_for_admin != ctx.accounts.usdt_ata_for_admin.key() || 
+        data.usdt_ata_for_funding_account != ctx.accounts.usdt_ata_for_funding_account.key(){
             return Err(ProgramError::IllegalOwner);
         }
         
 
         // amount calculation for admin and funding account
-        let amount_share = usdt_amount/2;
+        let amount_share = (usdt_amount * data.funding_share) / 1000;
 
         // transfer USDT from user to the admin ATA
         let cpi_ctx = CpiContext::new(
@@ -261,10 +296,9 @@ pub mod ico {
 
         // transfer ICO from program to the user ATA
         // let ico_amount = usdt_amount / ctx.accounts.data.usdt;
-        let mut ico_amount =0;
-             ico_amount = (usdt_amount * 100000000)/ ctx.accounts.data.usdt;
+        let ico_amount = (usdt_amount * SCALE_FACTOR_TRUMP_TOKEN)/ data.usd;
              
-        let data = &mut ctx.accounts.data;
+        // let data = &mut ctx.accounts.data;
              if ico_amount > (data.total_amount - data.amount_sold) {
                 return Err(ProgramError::InsufficientFunds);
             }
@@ -282,7 +316,7 @@ pub mod ico {
         );
         token::transfer(cpi_ctx, ico_amount)?;
         
-        data.amount_sold = data.amount_sold + ico_amount;
+        data.amount_sold += ico_amount;
         msg!("transfer {} ico to buyer/user.", ico_amount);
         Ok(())
     }
@@ -290,7 +324,7 @@ pub mod ico {
 
     /* 
     ===========================================================
-        buy_with_usdt function use BuyWithUsdc struct
+        buy_with_usdC function use BuyWithUsdc struct
     ===========================================================
 */
 pub fn buy_with_usdc(
@@ -298,16 +332,17 @@ pub fn buy_with_usdc(
     _ico_ata_for_ico_program_bump: u8,
     usdc_amount: u64,
 ) -> ProgramResult {
-    if ctx.accounts.data.end_time < Clock::get()?.unix_timestamp {
-        return Err(ProgramError::IncorrectProgramId);
+    let data = &mut ctx.accounts.data;
+    if data.end_time < Clock::get()?.unix_timestamp {
+        return Err(ProgramError::Custom(ctx.accounts.data.end_time as u32));
     }
-    if ctx.accounts.data.usdc_ata_for_admin != ctx.accounts.usdc_ata_for_admin.key() ||
-    ctx.accounts.data.usdc_ata_for_funding_account != ctx.accounts.usdc_ata_for_funding_account.key() {
+    if data.usdc_ata_for_admin != ctx.accounts.usdc_ata_for_admin.key() ||
+    data.usdc_ata_for_funding_account != ctx.accounts.usdc_ata_for_funding_account.key() {
         return Err(ProgramError::IllegalOwner);
     }
     
 
-    let amount_share = usdc_amount / 2;
+    let amount_share = (usdc_amount * data.funding_share) / 1000;
     // transfer USDT from user to the admin ATA
     let cpi_ctx = CpiContext::new(
         ctx.accounts.token_program.to_account_info(),
@@ -336,10 +371,9 @@ pub fn buy_with_usdc(
 
     // transfer ICO from program to the user ATA
     // let ico_amount = usdt_amount / ctx.accounts.data.usdt;
-    let mut ico_amount =0;
-         ico_amount = (usdc_amount * 100000000) / ctx.accounts.data.usdt;
+    let ico_amount = (usdc_amount * SCALE_FACTOR_TRUMP_TOKEN) / data.usd;
          
-    let data = &mut ctx.accounts.data;
+    
          if ico_amount > (data.total_amount - data.amount_sold) {
             return Err(ProgramError::InsufficientFunds);
         }
@@ -357,7 +391,7 @@ pub fn buy_with_usdc(
     );
     token::transfer(cpi_ctx, ico_amount)?;
     
-    data.amount_sold = data.amount_sold + ico_amount;
+    data.amount_sold += ico_amount;
     msg!("transfer {} ico to buyer/user.", ico_amount);
     Ok(())
 }
@@ -372,17 +406,19 @@ pub fn buy_with_usdc(
         ctx: Context<WithDraw>,
         _ico_ata_for_ico_program_bump: u8,
         token_amount: u64,
-    ) -> ProgramResult {
-        if ctx.accounts.data.admin != ctx.accounts.admin.key() {
-            return Err(ProgramError::IllegalOwner);
-        }
-        if ctx.accounts.data.manager != ctx.accounts.manager.key() {
-            return Err(ProgramError::IllegalOwner);
-        }
-
-        if ctx.accounts.data.end_time > Clock::get()?.unix_timestamp {
-            return Err(ProgramError::Custom(0));
-        }
+    ) -> Result<()> {
+    
+        let data = &mut ctx.accounts.data;
+        require!(
+            data.admin == ctx.accounts.admin.key(),
+            OwnerError::InvalidOwner
+        );
+        // only withdraw function will be executed after ico event has ended
+        require!(
+            data.end_time < Clock::get()?.unix_timestamp,
+            IcoTimeError::EventNotEnded
+        );
+    
         
         let ico_mint_address = ctx.accounts.ico_mint.key();
         let seeds = &[ico_mint_address.as_ref(), &[_ico_ata_for_ico_program_bump]];
@@ -397,6 +433,8 @@ pub fn buy_with_usdc(
             &signer,
         );
         token::transfer(cpi_ctx, token_amount)?;
+        data.total_amount -= token_amount;
+        
         Ok(())
     }
 
@@ -405,36 +443,37 @@ pub fn buy_with_usdc(
         update_data function use UpdateData struct
     ===========================================================
 */
-    pub fn update_data(ctx: Context<UpdateData>, total_amount: u64,end_time: i64, usdt_price: u64,phase: u64) -> ProgramResult {
-        if ctx.accounts.data.manager != *ctx.accounts.manager.key {
-            return Err(ProgramError::IncorrectProgramId);
-        }
+    pub fn update_data(ctx: Context<UpdateData>, end_time: i64, usd_price: u64) -> Result<()> {
+        // this will be used to extend time if ico event time has ended
         let data = &mut ctx.accounts.data;
+        require!(
+            data.admin == ctx.accounts.admin.key(),
+            OwnerError::InvalidOwner
+        );
+        require!(
+            data.end_time < Clock::get()?.unix_timestamp,
+            IcoTimeError::EventNotEnded
+        );
+        
+        
        
         data.end_time = end_time;
-        data.usdt = usdt_price;
-        data.total_amount = data.total_amount + total_amount - data.amount_sold;
-        data.amount_sold = 0;
-        data.phase_id = phase;
-        msg!("update ico time {}, {} and USDT/ICO {}", total_amount,end_time, usdt_price);
+        data.usd = usd_price;
+        
+        msg!("update ico time  {}, and price {}",end_time, usd_price);
         Ok(())
     }
 
 
-    pub fn update_admin(ctx: Context<UpdateAdmin>, usdt_ata_for_admin:Pubkey,new_admin: Pubkey, new_manager:Pubkey, usdc_ata_for_admin:Pubkey) -> ProgramResult {
-        // if ctx.accounts.data.manager != *ctx.accounts.manager.key {
-        //     return Err(ProgramError::IncorrectProgramId);
-        // }
-        if ctx.accounts.data.admin != *ctx.accounts.admin.key {
-            return Err(ProgramError::IncorrectProgramId);
+    pub fn update_admin(ctx: Context<UpdateAdmin>, usdt_ata_for_admin:Pubkey,new_admin: Pubkey, usdc_ata_for_admin:Pubkey) -> ProgramResult {
+        
+        if ctx.accounts.data.admin != ctx.accounts.admin.key() {
+            return Err(ProgramError::IllegalOwner);
         }
         let data = &mut ctx.accounts.data;
-       
-        
         data.admin = new_admin;
         data.usdt_ata_for_admin = usdt_ata_for_admin;
         data.usdc_ata_for_admin = usdc_ata_for_admin;
-        data.manager = new_manager;
         
         
         Ok(())
@@ -463,7 +502,7 @@ pub fn buy_with_usdc(
     )]
         pub ico_ata_for_ico_program: Account<'info, TokenAccount>,
 
-        #[account(init, payer=admin, space=9000, seeds=[b"data", admin.key().as_ref()], bump)]
+        #[account(init, payer=admin, space=4500, seeds=[b"data", admin.key().as_ref()], bump)]
         pub data: Account<'info, Data>,
 
         #[account(
@@ -535,7 +574,7 @@ pub fn buy_with_usdc(
         pub ico_ata_for_user: Account<'info, TokenAccount>,
 
         /// CHECK:
-        #[account(address = Pubkey::from_str(SOL_USDT_FEED).unwrap() @ FeedError::InvalidPriceFeed)]
+        #[account(address = Pubkey::from_str(SOL_USD_FEED).unwrap() @ FeedError::InvalidPriceFeed)]
         pub price_feed: Account<'info, PriceUpdateV2>,
 
         #[account(mut)]
@@ -660,9 +699,6 @@ pub struct BuyWithUsdc<'info> {
 
         #[account(mut)]
         pub admin: Signer<'info>,
-        pub manager:Signer<'info>,
-
-        
 
         pub token_program: Program<'info, Token>,
     }
@@ -677,7 +713,7 @@ pub struct BuyWithUsdc<'info> {
         #[account(mut)]
         pub data: Account<'info, Data>,
         #[account(mut)]
-        pub manager: Signer<'info>,
+        pub admin: Signer<'info>,
         pub system_program: Program<'info, System>,
     }
      
@@ -698,13 +734,13 @@ pub struct BuyWithUsdc<'info> {
 */
     #[account]
     pub struct Data {
-        pub phase_id: u64,
         pub end_time: i64,
         pub amount_sold: u64,
         pub total_amount:u64,
-        pub usdt: u64,
+        // funding shares will be the multiple of 10. e.g 1000/1000 will be 100 percent
+        pub funding_share: u64,
+        pub usd: u64,
         pub admin: Pubkey,
-        pub manager: Pubkey,
         pub usdt_ata_for_admin: Pubkey,
         pub usdc_ata_for_admin: Pubkey,
         pub funding_account: Pubkey,
