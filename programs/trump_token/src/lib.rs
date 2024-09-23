@@ -4,7 +4,7 @@ use anchor_spl::token::{self, Mint, Token, TokenAccount};
 use pyth_solana_receiver_sdk::price_update::{get_feed_id_from_hex, PriceUpdateV2};
 use std::str::FromStr;
 
-declare_id!("HXCVfLkfbXnZXst6HL5G1pDWPdEtxXhprWyFkJmwSPFS");
+declare_id!("73zipXWPAKgfDvqTqqEFsyRwYxrAgAFVBxtwCuyVCEyw");
 
 const SOL_USD_FEED: &str = "7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE";
 pub const MAXIMUM_AGE: u64 = 60; // One minute
@@ -36,6 +36,12 @@ pub enum IcoTimeError {
     EventNotEnded,
 }
 
+#[error_code]
+pub enum InvalidShareError {
+    #[msg("funding_share must be less then or equal to 1000.")]
+    ShareAmountExceeded,
+}
+
 
 
 #[program]
@@ -43,7 +49,6 @@ pub mod ico {
     pub const OWNER_ADDRESS: &str = "EvKCj62U6fsDJyqwcSeanyeK7YUvWeW989vLhksDGa2i";
     pub const ICO_MINT_ADDRESS: &str = "3NqeVUbz469hmNaPBfAKCejJMUkmyj8TwGm1cPZptRFY";
     pub const SCALE: u64 = 1_000_000;
-    pub const SCALE_FACTOR_TRUMP_TOKEN: u64 = 100_000_000;
     
 
     use super::*;
@@ -64,13 +69,18 @@ pub mod ico {
         usdc_ata_for_admin: Pubkey,
         funding_account: Pubkey,
         usdt_ata_for_funding_account: Pubkey,
-        usdc_ata_for_funding_account: Pubkey
+        usdc_ata_for_funding_account: Pubkey,
+        token_decimals: u64
     ) -> Result<()> {
         let admin_pubkey = Pubkey::from_str(OWNER_ADDRESS).unwrap();
         // address = Pubkey::from_str(OWNER_ADDRESS).unwrap() @ OwnerError::InvalidOwner
         require!(
             ctx.accounts.admin.key() == admin_pubkey,
             OwnerError::InvalidOwner
+        );
+        require!(
+            funding_share <= 1000,
+            InvalidShareError::ShareAmountExceeded
         );
         msg!("create program ATA for hold ICO");
         // transfer ICO admin to program ata
@@ -98,6 +108,7 @@ pub mod ico {
         data.funding_account = funding_account;
         data.usdt_ata_for_funding_account = usdt_ata_for_funding_account;
         data.usdc_ata_for_funding_account = usdc_ata_for_funding_account;
+        data.token_decimals = token_decimals;
         msg!("save data in program PDA.");
         Ok(())
     }
@@ -296,7 +307,8 @@ pub mod ico {
 
         // transfer ICO from program to the user ATA
         // let ico_amount = usdt_amount / ctx.accounts.data.usdt;
-        let ico_amount = (usdt_amount * SCALE_FACTOR_TRUMP_TOKEN)/ data.usd;
+        let scale_factor_for_token = 10u64.pow(data.token_decimals as u32);
+        let ico_amount = (usdt_amount * scale_factor_for_token)/ data.usd;
              
         // let data = &mut ctx.accounts.data;
              if ico_amount > (data.total_amount - data.amount_sold) {
@@ -371,9 +383,9 @@ pub fn buy_with_usdc(
 
     // transfer ICO from program to the user ATA
     // let ico_amount = usdt_amount / ctx.accounts.data.usdt;
-    let ico_amount = (usdc_amount * SCALE_FACTOR_TRUMP_TOKEN) / data.usd;
+    let scale_factor_for_token = 10u64.pow(data.token_decimals as u32);
+    let ico_amount = (usdc_amount * scale_factor_for_token) / data.usd;
          
-    
          if ico_amount > (data.total_amount - data.amount_sold) {
             return Err(ProgramError::InsufficientFunds);
         }
@@ -495,14 +507,14 @@ pub fn buy_with_usdc(
         #[account(
         init,
         payer = admin,
-        seeds = [ ICO_MINT_ADDRESS.parse::<Pubkey>().unwrap().as_ref() ],
+        seeds = [ICO_MINT_ADDRESS.parse::<Pubkey>().unwrap().as_ref() ],
         bump,
         token::mint = ico_mint,
         token::authority = ico_ata_for_ico_program,
     )]
         pub ico_ata_for_ico_program: Account<'info, TokenAccount>,
-
-        #[account(init, payer=admin, space=4500, seeds=[b"data", admin.key().as_ref()], bump)]
+        // Discriminator: 8 bytes (added automatically by Anchor for all accounts)
+        #[account(init, payer=admin, space=300, seeds=[b"data", admin.key().as_ref()], bump)]
         pub data: Account<'info, Data>,
 
         #[account(
@@ -745,6 +757,7 @@ pub struct BuyWithUsdc<'info> {
         pub usdc_ata_for_admin: Pubkey,
         pub funding_account: Pubkey,
         pub usdt_ata_for_funding_account: Pubkey,
-        pub usdc_ata_for_funding_account: Pubkey
+        pub usdc_ata_for_funding_account: Pubkey,
+        pub token_decimals: u64
     }
 }
